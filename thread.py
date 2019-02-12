@@ -110,7 +110,7 @@ try:
    thread.start_new_thread( read_temp )
    thread.start_new_thread( read_acc )
 except:
-   print "Error: unable to start thread"
+   print ("Error: unable to start thread")
 
 while 1:
    pass
