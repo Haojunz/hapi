@@ -3,7 +3,7 @@ import time
 import board
 import busio
 import json
-import thread
+import _thread
 import paho.mqtt.client as mqtt
 
 def on_message(client, userdata, message) :
@@ -108,11 +108,5 @@ time.sleep(0.5)
 # This is the best accuracy but a little slower at reacting to changes.
 # The first sample will be meaningless
 
-try:
-    thread.start_new_thread(temperature,(5))
-    thread.start_new_thread(acc,(1))
-except:
-    print "Error: unable to start thread"
-
 while True:
-    pass
+    temperature(5)
