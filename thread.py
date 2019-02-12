@@ -1,4 +1,4 @@
-import thread
+import _thread
 import time
 import smbus
 import board
@@ -107,8 +107,8 @@ def read_acc():
 
 
 try:
-   thread.start_new_thread( read_temp )
-   thread.start_new_thread( read_acc )
+   _thread.start_new_thread( read_temp )
+   _thread.start_new_thread( read_acc )
 except:
    print ("Error: unable to start thread")
 
