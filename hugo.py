@@ -1,46 +1,118 @@
 import smbus
 import time
 import board
-import digitalio
 import busio
-import adafruit_lis3dh
+import json
+import thread
+import paho.mqtt.client as mqtt
 
-i2c = busio.I2C(board.SCL, board.SDA)
-int1 = digitalio.DigitalInOut(board.D6)  
-lis3dh = adafruit_lis3dh.LIS3DH_I2C(i2c, int1=int1)
+def on_message(client, userdata, message) :
+    print("Received message:{} on topic {}".format(message.payload, message.topic))
+
+def temperature (delay):
+
+    obj = bus.read_i2c_block_data(0x40,0x03,2)
+    raw = bus.read_i2c_block_data(0x40,0x01,2)
+    #print(obj)
+    #print(raw)
+    int_obj=int.from_bytes(obj,'big')
+    int_raw=int.from_bytes(raw,'big')
+    obj_temp=int_obj*0.03125/4
+    die_temp=int_raw*0.03125/4
+    #print(temp)
+    #print(die)
+
+    data = {
+        "temperature":{
+            "die": die_temp,
+            "object": obj_temp
+        }
+    }
 
 
-address = 0x18
+    json_string = json.dumps(data)
 
-reg = 0x28
+    client.publish("IC.embedded/HAGI/test",json_string)
 
-channel = 1
+    time.sleep(delay)
 
+
+def acc(delay):
+    x_lsb = bus.read_byte_data(0x18, 0x28)
+    x_msb = bus.read_byte_data(0x18, 0x29)
+
+    x = x_msb * 256 + x_lsb
+    if x > 32767 :
+    	x -= 65536
+
+
+    #y
+    y_lsb = bus.read_byte_data(0x18, 0x2A)
+    y_msb = bus.read_byte_data(0x18, 0x2B)
+
+    y = y_msb * 256 + y_lsb
+    if y > 32767 :
+    	y -= 65536
+
+
+    #z
+    z_lsb = bus.read_byte_data(0x18, 0x2C)
+    z_msb = bus.read_byte_data(0x18, 0x2D)
+
+    z = z_msb * 256 + z_lsb
+    if z > 32767 :
+    	z -= 65536
+
+    x = x/DIVIDER
+    y = y/DIVIDER
+    z = z/DIVIDER
+
+    data = {
+        "axis":{
+            "x": x,
+            "y": y,
+            "z": z
+        }
+    }
+
+
+    json_string = json.dumps(data)
+
+    client.publish("IC.embedded/HAGI/test",json_string)
+
+    time.sleep(delay)
+
+DIVIDER = 16380
+
+client = mqtt.Client()
+client.tls_set(ca_certs="mosquitto.org.crt",certfile="client.crt",keyfile="client.key")
+print(client.connect("test.mosquitto.org",port=8884))
+# msg = input()
+# msg_info = client.publish("IC.embedded/HAGI/test",msg)
+#msg_info is result of publish()
+
+client.subscribe("IC.embedded/HAGI/#")
+client.on_message = on_message
+client.loop_start()
+
+# Create library object using our Bus I2C port
+#i2c = busio.I2C(board.SCL, board.SDA)
 bus = smbus.SMBus(1)
 
+bus.write_byte_data(0x18, 0x20, 0x27)
+bus.write_byte_data(0x18, 0x23, 0x00)
+
+time.sleep(0.5)
+
+# Initialize communication with the sensor, using the default 16 samples per conversion.
+# This is the best accuracy but a little slower at reacting to changes.
+# The first sample will be meaningless
+
+try:
+    thread.start_new_thread(temperature,(5))
+    thread.start_new_thread(acc,(1))
+except:
+    print "Error: unable to start thread"
 
 while True:
-    x_l = bus.read_byte_data(address,0x28|0x80)
-    x_m = bus.read_byte_data(address,0x29|0x80)
-
-    x = [x_l,x_m]
-
-    int_x = int.from_bytes(x,'big')
-
-    print(int_x/16380)
-
-    time.sleep(1)
-
-
-#xyz=bus.read_i2c_block_data(address,reg|0x80,6)
-
-#print(xyz)
-
-#x = xyz[0:2]
-
-#x=int.from_bytes(x,'big')
-
-#x=x/16380
-
-#print(x)
-
+    pass
