@@ -10,12 +10,19 @@ import board
 import digitalio
 import busio
 import adafruit_vl53l0x
+from decimal import Decimal
 
 
 seed(1)
 DIVIDER = 16380
-TEMP_UPPER_LIMIT = 50
-DIS_LOWER_LIMIT = 40
+TEMP_UPPER_LIMIT = 35 #C
+DIS_LOWER_LIMIT = 40 #mm
+DIE_TEMP_UPPER_LIMIT = 30 #C
+SHAKE_THRES = 10
+DIST_DELAY = 0.2
+A_DELAY = 0.1
+TEM_DELAY = 5
+
 
 
 # Hardware I2C setup. Use the CircuitPlayground built-in accelerometer if available;
@@ -66,14 +73,16 @@ def measure_temp (temp_delay):
     # global z
     global s
     global d
-    die_temp = 0
-    obj_temp = 0
+    global die_alert
+    #die_temp = 0
+    #obj_temp = 0
     alert = 0
+    die_alert = 0
     # x = 0
     # y = 0
     # z = 0
     s = 0
-    d = 0
+    d = 819.0
     while True:
         obj = bus.read_i2c_block_data(0x40,0x03,2)
         raw = bus.read_i2c_block_data(0x40,0x01,2)
@@ -87,11 +96,20 @@ def measure_temp (temp_delay):
         #print(die)
 
         alert = 0
+        die_alert = 0
 
         if obj_temp>=TEMP_UPPER_LIMIT:
-            value = gauss(0,1)
-            obj_temp = TEMP_UPPER_LIMIT+value
+            noise = abs(gauss(0,1))
+            obj_temp = round(TEMP_UPPER_LIMIT+noise,2)
             alert = 1
+
+        if die_temp>=DIE_TEMP_UPPER_LIMIT:
+            die_alert = 1
+
+
+        obj_temp = round(obj_temp,2)
+        die_temp = round(die_temp,2)
+
 
         print(obj_temp)
 
@@ -115,7 +133,8 @@ def measure_temp (temp_delay):
             "temperature":{
                 "die": die_temp,
                 "object": obj_temp,
-                "alert": alert
+                "alert": alert,
+                "die_alert": die_alert
             },
             "shake": s,
             "distance": d
@@ -141,21 +160,23 @@ def measure_acc(acc_delay,threshold):
     # global z
     global s
     global d
-    die_temp = 0
-    obj_temp = 0
+    global die_alert
+    #die_temp = 0
+    #obj_temp = 0
     alert = 0
+    die_alert = 0
     # x = 0
     # y = 0
     # z = 0
     s = 0
-    d = 0
+    #d = 0
     while True:
 
         s = 0
 
         if lis3dh.shake(shake_threshold=threshold):
             s = 1
-            print("Shaken!")
+            #print("Shaken!")
         # x_lsb = bus.read_byte_data(0x18, 0x28)
         # x_msb = bus.read_byte_data(0x18, 0x29)
         #
@@ -209,7 +230,8 @@ def measure_acc(acc_delay,threshold):
             "temperature":{
                 "die": die_temp,
                 "object": obj_temp,
-                "alert": alert
+                "alert": alert,
+                "die_alert": die_alert
             },
             "shake": s,
             "distance": d
@@ -235,14 +257,16 @@ def measure_distance(distance_delay):
     # global z
     global s
     global d
-    die_temp = 0
-    obj_temp = 0
+    global die_alert
+    #die_temp = 0
+    #obj_temp = 0
     alert = 0
+    die_alert = 0
     # x = 0
     # y = 0
     # z = 0
     s = 0
-    d = 0
+    #d = 0
     while True:
 
         d = vl53.range
@@ -251,6 +275,7 @@ def measure_distance(distance_delay):
 
         if d < DIS_LOWER_LIMIT:
             d = 0 # x = o if too close -> alert
+
 
         # distance = {
         #     "temperature":{
@@ -266,11 +291,15 @@ def measure_distance(distance_delay):
         #     "distance": d
         # }
 
+        d = d/10 # mm -> cm
+
+
         distance = {
             "temperature":{
                 "die": die_temp,
                 "object": obj_temp,
-                "alert": alert
+                "alert": alert,
+                "die_alert": die_alert
             },
             "shake": s,
             "distance": d
@@ -286,9 +315,9 @@ def measure_distance(distance_delay):
 
 
 try:
-   _thread.start_new_thread( measure_temp, (5,) )
-   _thread.start_new_thread( measure_acc, (0.1, 11,) )
-   _thread.start_new_thread( measure_distance, (0.2,) )
+   _thread.start_new_thread( measure_temp, (TEM_DELAY,) )
+   _thread.start_new_thread( measure_acc, (A_DELAY, SHAKE_THRES,) )
+   _thread.start_new_thread( measure_distance, (DIST_DELAY,) )
 except:
    print("Error: unable to start thread")
 
