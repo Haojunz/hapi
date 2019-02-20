@@ -1,6 +1,0 @@
-import paho.mqtt.client as mqtt
-client.tls_set(ca_certs="mosquitto.org.crt", certfile="client.crt",keyfile="client.key")
-client = mqtt.Client()
-print(client.connect("test.mosquitto.org",port=8884))
-message = client.publish("IC.embedded/HAGI/test","konichiwaa")
-print(mqtt.error_string(message.rc))

@@ -1,325 +1,199 @@
+######## Import libraries needed ########
+# p.s. libraries of sensors are not included
 import smbus
 import time
 import json
-from random import seed
-from random import gauss
 import _thread
-import paho.mqtt.client as mqtt
-import adafruit_lis3dh
-import board
-import digitalio
-import busio
-import adafruit_vl53l0x
 from decimal import Decimal
+import math
+import paho.mqtt.client as mqtt
+
+######## Pre-defined parameters ########
+DIVIDER = 16380 # Pre-defined parameter used for calculation of acceleration
+TEMP_UPPER_LIMIT = 35 # Unit: C°
+DIS_LOWER_LIMIT = 4 # Unit: cm
+DIE_TEMP_UPPER_LIMIT = 30 #Unit: C°
+SHAKE_THRES = 11 # Shake threshold
+DISTANCE_DELAY = 0.2 # Delay of distance sensor = 1/Rate of distance sensor
+ACC_DELAY = 0.1 # Delay of accelerometer = 1/Rate of accelerometer
+TEMP_DELAY = 5 # Delay of therometer = 1/Rate of therometer
 
 
-seed(1)
-DIVIDER = 16380
-TEMP_UPPER_LIMIT = 35 #C
-DIS_LOWER_LIMIT = 40 #mm
-DIE_TEMP_UPPER_LIMIT = 30 #C
-SHAKE_THRES = 10
-DIST_DELAY = 0.2
-A_DELAY = 0.1
-TEM_DELAY = 5
-
-
-
-# Hardware I2C setup. Use the CircuitPlayground built-in accelerometer if available;
-# otherwise check I2C pins.
-if hasattr(board, 'ACCELEROMETER_SCL'):
-    i2c = busio.I2C(board.ACCELEROMETER_SCL, board.ACCELEROMETER_SDA)
-    int1 = digitalio.DigitalInOut(board.ACCELEROMETER_INTERRUPT)
-    lis3dh = adafruit_lis3dh.LIS3DH_I2C(i2c, address=0x19, int1=int1)
-else:
-    i2c = busio.I2C(board.SCL, board.SDA)
-    int1 = digitalio.DigitalInOut(board.D6)  # Set to correct pin for interrupt!
-    lis3dh = adafruit_lis3dh.LIS3DH_I2C(i2c, int1=int1)
-
-# Set range of accelerometer (can be RANGE_2_G, RANGE_4_G, RANGE_8_G or RANGE_16_G).
-lis3dh.range = adafruit_lis3dh.RANGE_2_G
-
-
+######## Pre-defined functions & settings ########
 def on_message(client, userdata, message) :
     print("Received message:{} on topic {}".format(message.payload, message.topic))
 
 client = mqtt.Client()
 #client.tls_set(ca_certs="mosquitto.org.crt",certfile="client.crt",keyfile="client.key")
-
-# print(client.connect("test.mosquitto.org",port=1883))
+#print(client.connect("test.mosquitto.org",port=1883))
 print(client.connect("ee-estott-octo.ee.ic.ac.uk",port=1883))
 
+## Received part:
 #client.subscribe("IC.embedded/HAGI/#")
 #client.on_message = on_message
 #client.loop_start()
 
-i2c = busio.I2C(board.SCL, board.SDA)
-vl53 = adafruit_vl53l0x.VL53L0X(i2c)
 
-bus = smbus.SMBus(1)
+bus = smbus.SMBus(1) # Create the i2c bus
+                     # Bus address of therometer:0x40
+                     # Bus address of accelerometer:0x18
+                     # Bus address of distance sensor:0x29
 
-bus.write_byte_data(0x18, 0x20, 0x27)
-bus.write_byte_data(0x18, 0x23, 0x00)
+
+bus.write_byte_data(0x18, 0x20, 0x27) # setup for the accelerometer with i2c addr 0x18: write command 0x27 into register with addr 0x20
+bus.write_byte_data(0x18, 0x23, 0x00) # write command 0x00 into register with addr 0x23
 
 time.sleep(0.5)
 
+# function used to measure object temperature(obj_temp) & environment temperature(die_temp)
+def measure_temp (delay):
 
-def measure_temp (temp_delay):
-    global die_temp
-    global obj_temp
-    global alert
-    # global x
-    # global y
-    # global z
-    global s
-    global d
-    global die_alert
-    #die_temp = 0
-    #obj_temp = 0
-    alert = 0
-    die_alert = 0
-    # x = 0
-    # y = 0
-    # z = 0
-    s = 0
-    d = 819.0
     while True:
-        obj = bus.read_i2c_block_data(0x40,0x03,2)
-        raw = bus.read_i2c_block_data(0x40,0x01,2)
-        #print(obj)
-        #print(raw)
-        int_obj=int.from_bytes(obj,'big')
-        int_raw=int.from_bytes(raw,'big')
-        obj_temp=int_obj*0.03125/4
-        die_temp=int_raw*0.03125/4
-        #print(temp)
-        #print(die)
+        obj = bus.read_i2c_block_data(0x40,0x03,2)      # read 2-bytes data which contains object temperature from therometer with i2c addr 0x40 through register with addr 0x03
+        raw = bus.read_i2c_block_data(0x40,0x01,2)      # read the data contain die temperature from output register with addr 0x01
 
-        alert = 0
+        int_obj = int.from_bytes(obj,'big')       # convert bytes into integer
+        int_raw = int.from_bytes(raw,'big')
+
+        obj_temp = int_obj*0.03125/4      # algorithm from data sheet to calculate object temperature
+        die_temp = int_raw*0.03125/4      # algorithm from data sheet to calculate die temperature
+
+        alert = 0       # initially there is no (die_)alarm so (die_)alarm = 0
         die_alert = 0
 
-        if obj_temp>=TEMP_UPPER_LIMIT:
-            noise = abs(gauss(0,1))
-            obj_temp = round(TEMP_UPPER_LIMIT+noise,2)
-            alert = 1
+        if obj_temp >= TEMP_UPPER_LIMIT:      # if object temperature is higer than the upper limit
+            alert = 1       # alarm is 1(actived)
 
-        if die_temp>=DIE_TEMP_UPPER_LIMIT:
-            die_alert = 1
+        if die_temp >= DIE_TEMP_UPPER_LIMIT:      # if die temperature is higer than the upper limit
+            die_alert = 1       # die_alarm = 1(actived)
 
+        obj_temp = round(obj_temp,2)        # truncate the obj_temp into two-decimals precision
+        die_temp = round(die_temp,2)        # truncate the die_temp into two-decimals precision
 
-        obj_temp = round(obj_temp,2)
-        die_temp = round(die_temp,2)
-
-
-        print(obj_temp)
-
-        print(die_temp)
-
-        # temp = {
-        #     "temperature":{
-        #         "die": die_temp,
-        #         "object": obj_temp,
-        #         "alert": alert
-        #     },
-        #     "axis":{
-        #         "x": x,
-        #         "y": y,
-        #         "z": z
-        #     },
-        #     "distance": d
-        # }
-
-        temp = {
+        temp = {                            # data structure that stores the information
             "temperature":{
                 "die": die_temp,
                 "object": obj_temp,
                 "alert": alert,
                 "die_alert": die_alert
-            },
-            "shake": s,
-            "distance": d
+            }
         }
 
+        json_temp = json.dumps(temp)        # convert the data structure into json byte-encoded string for transmitting
+        print(json_temp)                    # for debugging
+        client.publish("IC.embedded/HAGI",json_temp)       # transmit via mqtt with topic IC.embedded/HAGI
 
-        json_temp = json.dumps(temp)
+        time.sleep(delay)       # not measure too frequently for higher accuracy
+                                # (5s is needed for therometer to get accurate reading according to datasheet)
 
-        print(json_temp)
+# sub-function used in measure_shake to measure the acceleration in 3 axis
+def acc():
 
-        #print("tmp")
-        client.publish("IC.embedded/HAGI/test",json_temp)
+    # x-axis
+    x_lsb = bus.read_byte_data(0x18, 0x28)      # read the least significant byte of x from output register with addr 0x28
+    x_msb = bus.read_byte_data(0x18, 0x29)      # read the most significant byte of x  from output register with addr 0x29
 
-        time.sleep(temp_delay)
+    x = x_msb * 256 + x_lsb     # same as int.from_bytes which convert bytes into integer
+    if x > 32767 :      # algorithm for measurign x
+    	x -= 65536
+
+    # y-axis
+    y_lsb = bus.read_byte_data(0x18, 0x2A)      # read the least significant byte of y from output register with addr 0x2A
+    y_msb = bus.read_byte_data(0x18, 0x2B)      # read the most significant byte of y from output register with addr 0x2B
+
+    y = y_msb * 256 + y_lsb     # same as int.from_bytes which convert bytes into integer
+    if y > 32767 :      # algorithm for measuring y
+    	y -= 65536
+
+    # z-axis
+    z_lsb = bus.read_byte_data(0x18, 0x2C)      # read the least significant byte of z from output register with addr 0x2C
+    z_msb = bus.read_byte_data(0x18, 0x2D)      # read the most significant byte of z from output register with addr 0x2D
+
+    z = z_msb * 256 + z_lsb     # same as int.from_bytes which convert bytes into integer
+    if z > 32767 :       # algorithm for measuring y
+    	z -= 65536
+
+    x = x/DIVIDER       # algorithm from data sheet for 3 axis sensing
+    y = y/DIVIDER
+    z = z/DIVIDER
+
+    return (x,y,z)
+
+# function used to sense the movement of accelerometer, i.e. whether the accelerometer is shaked sufficiently (set by SHAKE_THRES)
+def measure_shake(delay,shake_threshold):
+
+    avg_count = 10      # how many measurements need before calculating the average result
+    total_delay = 0.1       # total time need for all measurements
+
+    while True:
+        shake_accel = (0, 0, 0)     # Initialize parameters
+        shake = 0       # define shake = 0 if there is not a shake
+
+        for _ in range(avg_count):      # for avg_count times of measurements
+            shake_accel = tuple(map(sum, zip(shake_accel, acc())))      # add up values from each measurement
+            time.sleep(total_delay / avg_count)     # sleep between each measurement for higher accuracy
+
+        avg = tuple(value / avg_count for value in shake_accel)     # calculate the average value of 10 times measurements
+        total_accel = 10*math.sqrt(sum(map(lambda x: x * x, avg)))      # algorithm from data sheet to calculate the total amount shake
+
+        if total_accel > shake_threshold:       # if total amount of shake is larger than the threshould
+            shake = 1                           # then there is a shake
+
+        acc_data = {
+            "shake": shake                      # data structure for the transmitted data
+        }
+
+        json_acc = json.dumps(acc_data)     # convert into json string for mqtt transmission
+        print(json_acc)     # for debugging
+        client.publish("IC.embedded/HAGI",json_acc)        # sending data by mqtt with topic IC.embedded/HAGI
+
+        time.sleep(delay)       # sleep between each measurement
 
 
-def measure_acc(acc_delay,threshold):
-    global die_temp
-    global obj_temp
-    global alert
-    # global x
-    # global y
-    # global z
-    global s
-    global d
-    global die_alert
-    #die_temp = 0
-    #obj_temp = 0
-    alert = 0
-    die_alert = 0
-    # x = 0
-    # y = 0
-    # z = 0
-    s = 0
-    #d = 0
+# sub-function used in measure_distance to convert two bytes into an integer
+def make_16bit_int(lsb, msb): # lsb: least significant byte; msb: most significant byte
+    return (msb << 8) | lsb
+
+# function used to measure distance
+def measure_distance(delay):
+    distance = 819.0 # pre-set the distance to 819.0 cm, which is an indicator of out-of-range readings,
+                     # at the start before the sensor is ready to give normal readings;
+                     # otherwise a few 0s will be generated before the sensor gives normal readings.
     while True:
 
-        s = 0
+        bus.write_byte_data(0x29, 0x000, 0x01) # Writing 0x01 in the starting address 0x000 to active the reading
+        distance_data = bus.read_i2c_block_data(0x29, 0x14, 12) # store the reading data
 
-        if lis3dh.shake(shake_threshold=threshold):
-            s = 1
-            #print("Shaken!")
-        # x_lsb = bus.read_byte_data(0x18, 0x28)
-        # x_msb = bus.read_byte_data(0x18, 0x29)
-        #
-        # x = x_msb * 256 + x_lsb
-        # if x > 32767 :
-        # 	x -= 65536
-        #
-        #
-        # #y
-        # y_lsb = bus.read_byte_data(0x18, 0x2A)
-        # y_msb = bus.read_byte_data(0x18, 0x2B)
-        #
-        # y = y_msb * 256 + y_lsb
-        # if y > 32767 :
-        # 	y -= 65536
-        #
-        #
-        # #z
-        # z_lsb = bus.read_byte_data(0x18, 0x2C)
-        # z_msb = bus.read_byte_data(0x18, 0x2D)
-        #
-        # z = z_msb * 256 + z_lsb
-        # if z > 32767 :
-        # 	z -= 65536
-        #
-        # x = x/DIVIDER
-        # y = y/DIVIDER
-        # z = z/DIVIDER
-        #
-        # print(x)
-        #
-        # print(y)
-        #
-        # print(z)
+        distance = make_16bit_int(distance_data[11], distance_data[10]) # Eleventh and twelfth byte contain the distance data.
 
-        # xyz = {
-        #     "temperature":{
-        #         "die": die_temp,
-        #         "object": obj_temp,
-        #         "alert": alert
-        #     },
-        #     "axis":{
-        #         "x": x,
-        #         "y": y,
-        #         "z": z
-        #     },
-        #     "distance": d
-        # }
+        distance = distance/10 # Covert unit from mm to cm
 
-        xyz = {
-            "temperature":{
-                "die": die_temp,
-                "object": obj_temp,
-                "alert": alert,
-                "die_alert": die_alert
-            },
-            "shake": s,
-            "distance": d
+        if distance < DIS_LOWER_LIMIT:
+            distance = 0 # distance = o if too close -> alert actived in app
+
+        # Package the data in terms of json form structure
+        distance_data = {
+            "distance": distance
         }
 
+        # Convert it to json byte-encoded string and publish it in the topic.
+        json_distance = json.dumps(distance_data) # convert into json string for mqtt transmission
+        print(json_distance) # for debugging
+        client.publish("IC.embedded/HAGI",json_distance) # transmit via mqtt with topic IC.embedded/HAGI
 
-        json_xyz = json.dumps(xyz)
-
-        print(json_xyz)
-
-        #print("acc")
-        client.publish("IC.embedded/HAGI/test",json_xyz)
-
-        time.sleep(acc_delay)
+        time.sleep(delay)
 
 
-def measure_distance(distance_delay):
-    global die_temp
-    global obj_temp
-    global alert
-    # global x
-    # global y
-    # global z
-    global s
-    global d
-    global die_alert
-    #die_temp = 0
-    #obj_temp = 0
-    alert = 0
-    die_alert = 0
-    # x = 0
-    # y = 0
-    # z = 0
-    s = 0
-    #d = 0
-    while True:
-
-        d = vl53.range
-
-        #print(x)
-
-        if d < DIS_LOWER_LIMIT:
-            d = 0 # x = o if too close -> alert
-
-
-        # distance = {
-        #     "temperature":{
-        #         "die": die_temp,
-        #         "object": obj_temp,
-        #         "alert": alert
-        #     },
-        #     "axis":{
-        #         "x": x,
-        #         "y": y,
-        #         "z": z
-        #     },
-        #     "distance": d
-        # }
-
-        d = d/10 # mm -> cm
-
-
-        distance = {
-            "temperature":{
-                "die": die_temp,
-                "object": obj_temp,
-                "alert": alert,
-                "die_alert": die_alert
-            },
-            "shake": s,
-            "distance": d
-        }
-
-        json_distance = json.dumps(distance)
-
-        print(json_distance)
-
-        client.publish("IC.embedded/HAGI",json_distance)
-
-        time.sleep(distance_delay)
-
-
+######## Main function ########
+# Threading is used because our sensors are set at different rates.
 try:
-   _thread.start_new_thread( measure_temp, (TEM_DELAY,) )
-   _thread.start_new_thread( measure_acc, (A_DELAY, SHAKE_THRES,) )
-   _thread.start_new_thread( measure_distance, (DIST_DELAY,) )
+   _thread.start_new_thread( measure_temp, (TEMP_DELAY,) )
+   _thread.start_new_thread( measure_shake, (ACC_DELAY, SHAKE_THRES,) )
+   _thread.start_new_thread( measure_distance, (DISTANCE_DELAY,) )
 except:
    print("Error: unable to start thread")
 
+
 while 1:
    pass
+
